@@ -1,221 +1,163 @@
 classdef Config < handle
     % CONFIG Configuration management for hierarchical model
-    %   Loads parameters from file or struct, validates, provides defaults
+    %   Manages all configuration parameters for hierarchies, physics, and learning
     
     properties
-        % Network architecture
+        config_struct           % Original config struct (reference)
+        
+        % Generic layer sizes (set based on hierarchy type)
+        n_L1                    % Current L1 size
+        n_L2                    % Current L2 size
+        n_L3                    % Current L3 size
+        
+        % Motor-specific layer sizes
         n_L1_motor
         n_L2_motor
         n_L3_motor
+        
+        % Planning-specific layer sizes
         n_L1_plan
         n_L2_plan
         n_L3_plan
         
-        % Semantic indices
-        idx_pos
-        idx_vel
-        idx_bias
-        
-        % Learning parameters
-        eta_rep
-        eta_W
-        momentum
-        weight_decay
-        motor_gain
-        
-        % Simulation parameters
-        dt
-        T_per_trial
-        n_trials
-        N  % Total timesteps
-        t  % Time vector
-        
         % Physics parameters
         gravity
+        air_drag
         restitution
         ground_friction
-        air_drag
+        workspace_bounds
+        dt
         
-        % Workspace bounds
-        workspace_bounds  % 3x2 matrix [min, max] for x,y,z
-        
-        % Task configuration
-        target_trajectories  % Cell array of trajectory structs
-        
-        % Logging
-        log_level  % 'DEBUG', 'INFO', 'WARN', 'ERROR'
-        
-        % Safety bounds
-        max_weight_value
-        max_precision_value
+        % Learning parameters
+        eta_rep                 % Representation learning rate
+        eta_W                   % Weight learning rate
+        momentum                % Momentum for weight updates
+        weight_decay            % L2 regularization
+        motor_gain              % Scaling for motor commands
+        max_weight_value        % Maximum weight magnitude
         max_error_value
+        max_precision_value         % Maximum error magnitude
+        
+        % Trial parameters
+        T_per_trial             % Duration of one trial (steps)
+        n_trials                % Number of trials
+        N                       % Total number of timesteps
+        
+        % Noise parameters
+        noise_enabled
+        position_noise_std
+        velocity_noise_std
+        noise_type
+        
+        % Visuomotor delay parameters
+        visual_latency_ms
+        enable_delay
+        prediction_horizon_ms
+        
+        % Logging parameters
+        log_level
+        
+        % Semantic indices (for motor/planning hierarchies)
+        idx_pos                 % Position indices in L1 [1,2,3]
+        idx_vel                 % Velocity indices in L1 [4,5,6]
+        idx_bias                % Bias index in L1 [7]
+        
+        % Task configuration (for planning hierarchy)
+        n_tasks
+        
+        % Target trajectories (for multi-target learning)
+        target_trajectories
     end
     
     methods
-        function obj = Config(source)
-            % Constructor: load from file or struct
-            %   source: filepath (string) or params struct
-            
-            if ischar(source) || isstring(source)
-                % Load from file
-                obj.loadFromFile(source);
-            elseif isstruct(source)
-                % Load from struct (e.g., PSO params)
-                obj.loadFromStruct(source);
-            else
-                error('Config source must be filepath or struct');
-            end
-            
-            % Apply defaults for missing fields
+        function obj = Config(config_struct)
+            % Constructor: initialize from struct
+            obj.config_struct = config_struct;
             obj.applyDefaults();
-            
-            % Validate configuration
-            obj.validate();
-            
-            % Compute derived parameters
-            obj.computeDerived();
-        end
-        
-        function loadFromFile(obj, filepath)
-            % Load configuration from YAML or MAT file
-            [~, ~, ext] = fileparts(filepath);
-            
-            switch ext
-                case '.mat'
-                    data = load(filepath);
-                    obj.loadFromStruct(data);
-                case {'.yaml', '.yml'}
-                    % Requires yaml toolbox or custom parser
-                    data = yaml.ReadYaml(filepath);
-                    obj.loadFromStruct(data);
-                otherwise
-                    error('Unsupported config file format: %s', ext);
-            end
-        end
-        
-        function loadFromStruct(obj, params)
-            % Load parameters from struct (copy all fields)
-            fields = fieldnames(params);
-            for i = 1:length(fields)
-                field = fields{i};
-                if isprop(obj, field)
-                    obj.(field) = params.(field);
-                end
-            end
         end
         
         function applyDefaults(obj)
-            % Apply default values for missing parameters
+            % Apply default values for all configuration parameters
+            cfg = obj.config_struct;
             
-            % Network architecture defaults
-            if isempty(obj.n_L1_motor), obj.n_L1_motor = 7; end
-            if isempty(obj.n_L2_motor), obj.n_L2_motor = 20; end
-            if isempty(obj.n_L3_motor), obj.n_L3_motor = 10; end
-            if isempty(obj.n_L1_plan), obj.n_L1_plan = 7; end
-            if isempty(obj.n_L2_plan), obj.n_L2_plan = 15; end
-            if isempty(obj.n_L3_plan), obj.n_L3_plan = 8; end
+            % ========== NETWORK ARCHITECTURE ==========
+            % Motor hierarchy
+            obj.n_L1_motor = obj.getField(cfg, 'n_L1_motor', 7);
+            obj.n_L2_motor = obj.getField(cfg, 'n_L2_motor', 20);
+            obj.n_L3_motor = obj.getField(cfg, 'n_L3_motor', 10);
             
-            % Semantic indices
-            if isempty(obj.idx_pos), obj.idx_pos = 1:3; end
-            if isempty(obj.idx_vel), obj.idx_vel = 4:6; end
-            if isempty(obj.idx_bias), obj.idx_bias = 7; end
+            % Planning hierarchy
+            obj.n_L1_plan = obj.getField(cfg, 'n_L1_plan', 7);
+            obj.n_L2_plan = obj.getField(cfg, 'n_L2_plan', 15);
+            obj.n_L3_plan = obj.getField(cfg, 'n_L3_plan', 8);
             
-            % Learning parameters
-            if isempty(obj.eta_rep), obj.eta_rep = 0.01; end
-            if isempty(obj.eta_W), obj.eta_W = 0.001; end
-            if isempty(obj.momentum), obj.momentum = 0.9; end
-            if isempty(obj.weight_decay), obj.weight_decay = 0.98; end
-            if isempty(obj.motor_gain), obj.motor_gain = 1.0; end
+            % ========== PHYSICS PARAMETERS ==========
+            obj.gravity = obj.getField(cfg, 'gravity', 9.81);
+            obj.air_drag = obj.getField(cfg, 'air_drag', 0.01);
+            obj.restitution = obj.getField(cfg, 'restitution', 0.95);
+            obj.ground_friction = obj.getField(cfg, 'ground_friction', 0.9);
+            obj.workspace_bounds = obj.getField(cfg, 'workspace_bounds', [-5, 5; -5, 5; 0, 5]);
+            obj.dt = obj.getField(cfg, 'dt', 0.02);
             
-            % Simulation parameters
-            if isempty(obj.dt), obj.dt = 0.02; end
-            if isempty(obj.T_per_trial), obj.T_per_trial = 50; end
-            if isempty(obj.n_trials), obj.n_trials = 3; end
+            % ========== LEARNING PARAMETERS ==========
+            obj.eta_rep = obj.getField(cfg, 'eta_rep', 0.01);
+            obj.eta_W = obj.getField(cfg, 'eta_W', 0.001);
+            obj.momentum = obj.getField(cfg, 'momentum', 0.9);
+            obj.weight_decay = obj.getField(cfg, 'weight_decay', 0.98);
+            obj.motor_gain = obj.getField(cfg, 'motor_gain', 1.0);
+            obj.max_weight_value = obj.getField(cfg, 'max_weight_value', 10.0);
+            obj.max_error_value = obj.getField(cfg, 'max_error_value', 10.0);
             
-            % Physics
-            if isempty(obj.gravity), obj.gravity = 9.81; end
-            if isempty(obj.restitution), obj.restitution = 0.75; end
-            if isempty(obj.ground_friction), obj.ground_friction = 0.90; end
-            if isempty(obj.air_drag), obj.air_drag = 0.001; end
+            % ========== TRIAL PARAMETERS ==========
+            obj.T_per_trial = obj.getField(cfg, 'T_per_trial', 250);
+            obj.n_trials = obj.getField(cfg, 'n_trials', 1);
+            obj.N = round(obj.T_per_trial / obj.dt);
             
-            % Workspace bounds
-            if isempty(obj.workspace_bounds)
-                obj.workspace_bounds = [-5, 5; -5, 5; 0, 5];
-            end
+            % ========== NOISE PARAMETERS ==========
+            obj.noise_enabled = obj.getField(cfg, 'noise_enabled', false);
+            obj.position_noise_std = obj.getField(cfg, 'position_noise_std', 0.05);
+            obj.velocity_noise_std = obj.getField(cfg, 'velocity_noise_std', 0.02);
+            obj.noise_type = obj.getField(cfg, 'noise_type', 'gaussian');
             
-            % Logging
-            if isempty(obj.log_level), obj.log_level = 'INFO'; end
+            % ========== VISUOMOTOR DELAY PARAMETERS ==========
+            obj.enable_delay = obj.getField(cfg, 'enable_delay', false);
+            obj.visual_latency_ms = obj.getField(cfg, 'visual_latency_ms', 0);
+            obj.prediction_horizon_ms = obj.getField(cfg, 'prediction_horizon_ms', 0);
             
-            % Safety bounds
-            if isempty(obj.max_weight_value), obj.max_weight_value = 100; end
-            if isempty(obj.max_precision_value), obj.max_precision_value = 500; end
-            if isempty(obj.max_error_value), obj.max_error_value = 10; end
+            % ========== LOGGING PARAMETERS ==========
+            obj.log_level = obj.getField(cfg, 'log_level', 'INFO');
+            
+            % ========== SEMANTIC INDICES ==========
+            obj.idx_pos = obj.getField(cfg, 'idx_pos', [1, 2, 3]);
+            obj.idx_vel = obj.getField(cfg, 'idx_vel', [4, 5, 6]);
+            obj.idx_bias = obj.getField(cfg, 'idx_bias', 7);
+            
+            % ========== TASK CONFIGURATION ==========
+            obj.n_tasks = obj.getField(cfg, 'n_tasks', 1);
+            obj.target_trajectories = obj.getField(cfg, 'target_trajectories', []);
         end
         
-        function validate(obj)
-            % Validate configuration consistency
-            
-            % Network dimensions must be positive integers
-            assert(obj.n_L1_motor > 0 && obj.n_L2_motor > 0 && obj.n_L3_motor > 0, ...
-                'Motor hierarchy dimensions must be positive');
-            assert(obj.n_L1_plan > 0 && obj.n_L2_plan > 0 && obj.n_L3_plan > 0, ...
-                'Planning hierarchy dimensions must be positive');
-            
-            % Semantic indices must fit in L1
-            assert(max(obj.idx_pos) <= obj.n_L1_motor, ...
-                'Position indices exceed motor L1 dimension');
-            assert(max(obj.idx_vel) <= obj.n_L1_motor, ...
-                'Velocity indices exceed motor L1 dimension');
-            assert(obj.idx_bias <= obj.n_L1_motor, ...
-                'Bias index exceeds motor L1 dimension');
-            
-            % Learning rates must be positive
-            assert(obj.eta_rep > 0 && obj.eta_W > 0, ...
-                'Learning rates must be positive');
-            
-            % Timestep must be positive
-            assert(obj.dt > 0, 'Timestep must be positive');
-            
-            % Workspace bounds must be valid
-            assert(size(obj.workspace_bounds, 1) == 3, ...
-                'Workspace bounds must be 3x2 matrix');
-            assert(all(obj.workspace_bounds(:,1) < obj.workspace_bounds(:,2)), ...
-                'Workspace bounds: min must be < max');
-        end
-        
-        function computeDerived(obj)
-            % Compute derived parameters from base config
-            
-            % Total simulation time and timesteps
-            T = obj.T_per_trial * obj.n_trials;
-            obj.t = 0:obj.dt:T;
-            obj.N = length(obj.t);
-        end
-        
-        function saveToFile(obj, filepath)
-            % Save configuration to MAT file
-            params = obj.toStruct();
-            save(filepath, '-struct', 'params');
-        end
-        
-        function s = toStruct(obj)
-            % Convert config object to struct (for saving/passing)
-            props = properties(obj);
-            s = struct();
-            for i = 1:length(props)
-                s.(props{i}) = obj.(props{i});
+        function value = getField(~, struct_var, field_name, default_value)
+            % Helper function: safely get field from struct with default
+            if isfield(struct_var, field_name)
+                value = struct_var.(field_name);
+            else
+                value = default_value;
             end
         end
-    end
-    
-    methods (Static)
-        function createFromParams(params, output_file)
-            % Convert old params struct to new config file
-            %   Utility for migrating from old code
-            
-            config = Config(params);
-            config.saveToFile(output_file);
-            fprintf('Created config file: %s\n', output_file);
+        
+        function setForMotor(obj)
+            % Set generic layer sizes for motor hierarchy
+            obj.n_L1 = obj.n_L1_motor;
+            obj.n_L2 = obj.n_L2_motor;
+            obj.n_L3 = obj.n_L3_motor;
+        end
+        
+        function setForPlanning(obj)
+            % Set generic layer sizes for planning hierarchy
+            obj.n_L1 = obj.n_L1_plan;
+            obj.n_L2 = obj.n_L2_plan;
+            obj.n_L3 = obj.n_L3_plan;
         end
     end
 end

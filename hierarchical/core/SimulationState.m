@@ -25,7 +25,7 @@ classdef SimulationState < handle
         % Free energy tracking
         free_energy_motor
         free_energy_plan
-        free_energy_combined  % ADD THIS LINE
+        free_energy_combined
         
         % Neural state snapshots (optional detailed logging)
         motor_states  % Cell array of state snapshots
@@ -37,6 +37,12 @@ classdef SimulationState < handle
         
         % Current timestep
         current_step
+        
+        % Summary metrics (computed at end of simulation)
+        final_distance
+        mean_distance
+        interception_success  % Boolean: was ball intercepted?
+        interception_step     % Step number when interception occurred
     end
     
     methods
@@ -63,7 +69,7 @@ classdef SimulationState < handle
             
             obj.free_energy_motor = zeros(obj.N, 1, 'single');
             obj.free_energy_plan = zeros(obj.N, 1, 'single');
-            obj.free_energy_combined = zeros(1, obj.N);  % Initialize combined free energy
+            obj.free_energy_combined = zeros(1, obj.N);
             
             obj.distance_to_target = zeros(obj.N, 1, 'single');
             obj.cumulative_error = zeros(obj.N, 1, 'single');
@@ -71,6 +77,12 @@ classdef SimulationState < handle
             % Optional: detailed neural state logging (memory intensive)
             obj.motor_states = cell(obj.N, 1);
             obj.plan_states = cell(obj.N, 1);
+            
+            % Initialize summary metrics
+            obj.final_distance = 0;
+            obj.mean_distance = 0;
+            obj.interception_success = false;
+            obj.interception_step = 0;
         end
         
         function setInitialPlayerState(obj, x, y, z, vx, vy, vz)
@@ -140,6 +152,8 @@ classdef SimulationState < handle
             results.cumulative_error = obj.cumulative_error;
             results.final_distance = obj.distance_to_target(end);
             results.mean_distance = mean(obj.distance_to_target);
+            results.interception_success = obj.interception_success;
+            results.interception_step = obj.interception_step;
             
             % Neural snapshots (if logged)
             if ~isempty(obj.motor_states{1})
@@ -161,6 +175,31 @@ classdef SimulationState < handle
             snapshot.x_ball = obj.x_ball(i);
             snapshot.y_ball = obj.y_ball(i);
             snapshot.z_ball = obj.z_ball(i);
+        end
+        
+        function setInitialConditions(obj, player_x, player_y, ball_x, ball_y, ball_vx, ball_vy)
+            % Set initial positions for player and ball at ground level
+            % All z coordinates are set to 0 (ground level)
+            
+            % Player position (stationary at ground)
+            obj.x_player(1) = player_x;
+            obj.y_player(1) = player_y;
+            obj.z_player(1) = 0;  % Ground level
+            obj.vx_player(1) = 0;
+            obj.vy_player(1) = 0;
+            obj.vz_player(1) = 0;
+            
+            % Ball position and velocity
+            obj.x_ball(1) = ball_x;
+            obj.y_ball(1) = ball_y;
+            obj.z_ball(1) = 0;    % Ground level
+            obj.vx_ball(1) = ball_vx;
+            obj.vy_ball(1) = ball_vy;
+            obj.vz_ball(1) = 0;
+            
+            % Log initial conditions
+            fprintf('[Initial Conditions] Player=(%.1f,%.1f,0), Ball=(%.1f,%.1f,0)\n', ...
+                player_x, player_y, ball_x, ball_y);
         end
     end
 end

@@ -276,5 +276,65 @@ classdef NeuralHierarchy < handle
             obj.R_L2 = state.R_L2;
             obj.R_L3 = state.R_L3;
         end
+        
+        % Remove these two methods - they reference non-existent properties:
+        % function W = getW_L1_to_L2(obj)
+        % function W = getW_L2_to_L3(obj)
+        
+        % Keep only these two:
+        function W = getW_L2_to_L1(obj)
+            % Get weight matrix from L2 to L1
+            W = obj.W_L2_to_L1;
+        end
+        
+        function W = getW_L3_to_L2(obj)
+            % Get weight matrix from L3 to L2
+            W = obj.W_L3_to_L2;
+        end
+        
+        function pred = getPredL1(obj)
+            % Get L1 predictions
+            pred = obj.pred_L1;
+        end
+        
+        function pred = getPredL2(obj)
+            % Get L2 predictions
+            pred = obj.pred_L2;
+        end
+        
+        function pred = getPredL3(obj)
+            % Get L3 predictions
+            pred = obj.pred_L3;
+        end
+        
+        function rep = getRepL1(obj)
+            % Get L1 representations
+            rep = obj.R_L1;
+        end
+        
+        function rep = getRepL2(obj)
+            % Get L2 representations
+            rep = obj.R_L2;
+        end
+        
+        function rep = getRepL3(obj)
+            % Get L3 representations
+            rep = obj.R_L3;
+        end
+        
+        function err = getErrorL1(obj)
+            % Get L1 errors
+            err = obj.err_L1;
+        end
+        
+        function err = getErrorL2(obj)
+            % Get L2 errors
+            err = obj.err_L2;
+        end
+        
+        function err = getErrorL3(obj)
+            % Get L3 errors
+            err = obj.err_L3;
+        end
     end
 end

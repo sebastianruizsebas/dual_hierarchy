@@ -17,16 +17,21 @@ classdef Model < handle
         
         % Logging
         logger
+        
+        % Noise
+        noise_generator       % NoiseGenerator instance
+        
+        % Sensory buffers for visuomotor delay
+        ball_observation_buffer     % Circular buffer of past ball states
+        player_observation_buffer   % Circular buffer of past player states
+        buffer_size                 % Size of circular buffers
+        buffer_index                % Current write position
     end
     
     methods
-        function obj = Model(config_source)
+        function obj = Model(config)
             % Constructor: accepts config object or filepath/struct
-            if isa(config_source, 'Config')
-                obj.config = config_source;
-            else
-                obj.config = Config(config_source);
-            end
+            obj.config = config;
             
             obj.logger = Logger(obj.config.log_level);
             obj.logger.info('Initializing hierarchical model...');
@@ -35,48 +40,44 @@ classdef Model < handle
         end
         
         function initialize(obj)
-            % Create motor hierarchy
-            motor_config = struct();
-            motor_config.n_L1 = obj.config.n_L1_motor;
-            motor_config.n_L2 = obj.config.n_L2_motor;
-            motor_config.n_L3 = obj.config.n_L3_motor;
-            motor_config.idx_pos = obj.config.idx_pos;
-            motor_config.idx_vel = obj.config.idx_vel;
-            motor_config.idx_bias = obj.config.idx_bias;
-            motor_config.eta_rep = obj.config.eta_rep;
-            motor_config.eta_W = obj.config.eta_W;
-            motor_config.momentum = obj.config.momentum;
-            motor_config.weight_decay = obj.config.weight_decay;
-            motor_config.motor_gain = obj.config.motor_gain;
-            motor_config.max_weight_value = obj.config.max_weight_value;
-            motor_config.max_precision_value = obj.config.max_precision_value;
-            motor_config.max_error_value = obj.config.max_error_value;
+            % Initialize all model components
             
-            obj.motorHierarchy = MotorHierarchy(motor_config);
+            obj.logger = Logger(obj.config.log_level);
+            obj.logger.info('Initializing hierarchical model...');
+            
+            % Set config for motor hierarchy FIRST
+            obj.config.setForMotor();
+            obj.motorHierarchy = MotorHierarchy(obj.config);
             obj.logger.info('Motor hierarchy initialized (%dx%dx%d)', ...
-                motor_config.n_L1, motor_config.n_L2, motor_config.n_L3);
+                obj.config.n_L1_motor, obj.config.n_L2_motor, obj.config.n_L3_motor);
             
-            % Create planning hierarchy
-            plan_config = motor_config;  % Copy motor config
-            plan_config.n_L1 = obj.config.n_L1_plan;
-            plan_config.n_L2 = obj.config.n_L2_plan;
-            plan_config.n_L3 = obj.config.n_L3_plan;
-            plan_config.n_tasks = obj.config.n_trials;
+            % Set config for planning hierarchy FIRST
+            obj.config.setForPlanning();
+            obj.planningHierarchy = PlanningHierarchy(obj.config);
+            obj.logger.info('Planning hierarchy initialized (%dx%dx%d)', ...
+                obj.config.n_L1_plan, obj.config.n_L2_plan, obj.config.n_L3_plan);
             
-            obj.planningHierarchy = PlanningHierarchy(plan_config);
-            obj.logger.info('Planning hierarchy initialized (%dx%dx%d, %d tasks)', ...
-                plan_config.n_L1, plan_config.n_L2, plan_config.n_L3, plan_config.n_tasks);
-            
-            % Create physics engine
+            % Create physics engine - pass config only
             obj.physics = PhysicsEngine(obj.config);
             obj.logger.info('Physics engine initialized');
             
-            % Create state
+            % Create state arrays - pass config, NOT N
             obj.state = SimulationState(obj.config);
             obj.logger.info('State arrays allocated (N=%d)', obj.config.N);
             
-            % Initialize trajectories
-            obj.initializeTrajectories();
+            % Initialize noise generator
+            obj.noise_generator = NoiseGenerator(obj.config.noise_type);
+            
+            % Initialize sensory buffers for delay
+            if obj.config.enable_delay
+                obj.buffer_size = ceil(obj.config.visual_latency_ms / (obj.config.dt * 1000)) + 1;
+                obj.ball_observation_buffer = zeros(obj.buffer_size, 6);
+                obj.player_observation_buffer = zeros(obj.buffer_size, 6);
+                obj.buffer_index = 1;
+                
+                obj.logger.info('Sensory buffer initialized: size=%d, delay=%.0fms', ...
+                    obj.buffer_size, obj.config.visual_latency_ms);
+            end
         end
         
         function initializeTrajectories(obj)
@@ -105,92 +106,105 @@ classdef Model < handle
             obj.logger.info('Starting simulation (%d steps, dt=%.3f)', N, dt);
             
             for i = 1:N-1
-                % Update target kinematics
-                obj.updateTarget(i);
+                % Get CURRENT true states from physics
+                x_player = obj.state.x_player(i);
+                y_player = obj.state.y_player(i);
+                z_player = obj.state.z_player(i);
+                vx_player = obj.state.vx_player(i);
+                vy_player = obj.state.vy_player(i);
+                vz_player = obj.state.vz_player(i);
                 
-                % Update task context
-                trial_idx = obj.getCurrentTrial(i);
-                obj.planningHierarchy.setTask(trial_idx);
+                x_ball = obj.state.x_ball(i);
+                y_ball = obj.state.y_ball(i);
+                z_ball = obj.state.z_ball(i);
+                vx_ball = obj.state.vx_ball(i);
+                vy_ball = obj.state.vy_ball(i);
+                vz_ball = obj.state.vz_ball(i);
                 
-                % Motor hierarchy observes current state
-                obj.motorHierarchy.setPositionObservation(...
-                    obj.state.x_player(i), ...
-                    obj.state.y_player(i), ...
-                    obj.state.z_player(i));
-                obj.motorHierarchy.setVelocityObservation(...
-                    obj.state.vx_player(i), ...
-                    obj.state.vy_player(i), ...
-                    obj.state.vz_player(i));
+                % Store current observation in buffer for later retrieval
+                obj.storeObservation(x_ball, y_ball, z_ball, vx_ball, vy_ball, vz_ball, ...
+                                    x_player, y_player, z_player, vx_player, vy_player, vz_player);
+                
+                % ============================================================
+                % GET DELAYED OBSERVATIONS (what the brain "sees")
+                % ============================================================
+                [x_ball_obs, y_ball_obs, z_ball_obs, vx_ball_obs, vy_ball_obs, vz_ball_obs] = ...
+                    obj.getDelayedBallObservation();
+                
+                [x_player_obs, y_player_obs, z_player_obs, vx_player_obs, vy_player_obs, vz_player_obs] = ...
+                    obj.getDelayedPlayerObservation();
+                
+                % Add sensory noise
+                if obj.config.noise_enabled
+                    [x_ball_obs, y_ball_obs, z_ball_obs] = ...
+                        obj.noise_generator.addPositionNoise(x_ball_obs, y_ball_obs, z_ball_obs, ...
+                        obj.config.position_noise_std);
+                    
+                    [vx_ball_obs, vy_ball_obs, vz_ball_obs] = ...
+                        obj.noise_generator.addVelocityNoise(vx_ball_obs, vy_ball_obs, vz_ball_obs, ...
+                        obj.config.velocity_noise_std);
+                end
+                
+                % ============================================================
+                % PLANNING HIERARCHY - Uses DELAYED observations
+                % Predict FUTURE ball position (compensate for delay)
+                % ============================================================
+                obj.planningHierarchy.setTargetObservation(x_ball_obs, y_ball_obs, z_ball_obs);
+                obj.planningHierarchy.setVelocityObservation(vx_ball_obs, vy_ball_obs, vz_ball_obs);
+                
+                % KEY: Predict ahead by prediction_horizon
+                obj.planningHierarchy.predict();
+                [x_ball_pred, y_ball_pred, z_ball_pred] = obj.planningHierarchy.predictTargetPosition();
+                
+                % ============================================================
+                % MOTOR HIERARCHY - Uses DELAYED observations
+                % ============================================================
+                obj.motorHierarchy.setPositionObservation(x_player_obs, y_player_obs, z_player_obs);
+                obj.motorHierarchy.setVelocityObservation(vx_player_obs, vy_player_obs, vz_player_obs);
                 obj.motorHierarchy.setBiasObservation(1.0);
                 
-                % Planning hierarchy observes target
-                obj.planningHierarchy.setTargetObservation(...
-                    obj.state.x_ball(i), ...
-                    obj.state.y_ball(i), ...
-                    obj.state.z_ball(i));
+                % Set target from planning hierarchy
+                obj.motorHierarchy.setTargetPosition(x_ball_pred, y_ball_pred, z_ball_pred);
+                obj.motorHierarchy.updateRepresentations();
                 
-                % Hierarchies perform inference
-                motor_sensory = [obj.state.x_player(i); obj.state.y_player(i); obj.state.z_player(i); ...
-                                 obj.state.vx_player(i); obj.state.vy_player(i); obj.state.vz_player(i); 1.0];
-                obj.motorHierarchy.step(motor_sensory);
-                
-                plan_sensory = [obj.state.x_ball(i); obj.state.y_ball(i); obj.state.z_ball(i); ...
-                                obj.state.vx_ball(i); obj.state.vy_ball(i); obj.state.vz_ball(i); 1.0];
-                obj.planningHierarchy.step(plan_sensory);
-                
-                % Extract motor command
+                % Extract motor commands
                 [vx_cmd, vy_cmd, vz_cmd] = obj.motorHierarchy.extractMotorCommand();
                 
-                % Apply physics (integrate motion)
-                [x_new, y_new, z_new, vx_new, vy_new, vz_new] = ...
-                    obj.physics.integratePlayer(...
-                        obj.state.x_player(i), obj.state.y_player(i), obj.state.z_player(i), ...
-                        obj.state.vx_player(i), obj.state.vy_player(i), obj.state.vz_player(i), ...
-                        vx_cmd, vy_cmd, vz_cmd, dt);
+                % ============================================================
+                % PHYSICS - Integrate using TRUE (current) states
+                % ============================================================
+                [x_player, y_player, z_player, vx_player, vy_player, vz_player] = ...
+                    obj.physics.integratePlayer(x_player, y_player, z_player, ...
+                    vx_player, vy_player, vz_player, vx_cmd, vy_cmd, vz_cmd, obj.config.dt);
                 
-                % Update state
-                obj.state.x_player(i+1) = x_new;
-                obj.state.y_player(i+1) = y_new;
-                obj.state.z_player(i+1) = z_new;
-                obj.state.vx_player(i+1) = vx_new;
-                obj.state.vy_player(i+1) = vy_new;
-                obj.state.vz_player(i+1) = vz_new;
+                [x_ball, y_ball, z_ball, vx_ball, vy_ball, vz_ball] = ...
+                    obj.physics.integrateBall(x_ball, y_ball, z_ball, ...
+                    vx_ball, vy_ball, vz_ball, obj.config.dt);
                 
-                % Compute metrics
-                obj.state.updateDistanceMetrics(i);
+                % Store in state
+                obj.state.x_player(i+1) = x_player;
+                obj.state.y_player(i+1) = y_player;
+                obj.state.z_player(i+1) = z_player;
+                obj.state.vx_player(i+1) = vx_player;
+                obj.state.vy_player(i+1) = vy_player;
+                obj.state.vz_player(i+1) = vz_player;
                 
-                % Log free energy
-                FE_motor = obj.motorHierarchy.computeFreeEnergy();
-                FE_plan = obj.planningHierarchy.computeFreeEnergy();
+                obj.state.x_ball(i+1) = x_ball;
+                obj.state.y_ball(i+1) = y_ball;
+                obj.state.z_ball(i+1) = z_ball;
+                obj.state.vx_ball(i+1) = vx_ball;
+                obj.state.vy_ball(i+1) = vy_ball;
+                obj.state.vz_ball(i+1) = vz_ball;
                 
-                obj.state.free_energy_motor(i) = FE_motor;
-                obj.state.free_energy_plan(i) = FE_plan;
-                obj.state.free_energy_combined(i) = FE_motor + FE_plan;
-
-                % Periodic logging
-                if mod(i, 500) == 0
-                    obj.logger.info('Step %d/%d: FE_motor=%.2e, FE_plan=%.2e, dist=%.3f', ...
-                        i, N, FE_motor, FE_plan, obj.state.distance_to_target(i));
+                % Check interception
+                if obj.state.distance_to_target(i) < 0.5
+                    obj.state.interception_success = true;
+                    obj.state.interception_step = i;
                 end
             end
             
-            % After the main simulation loop ends, compute final metrics
-            
-            % Find the last valid timestep
-            last_step = min(i, obj.config.n_steps);
-            
-            % Compute final distance using the last timestep
-            final_x_diff = obj.state.x_player(last_step) - obj.state.x_ball(last_step);
-            final_y_diff = obj.state.y_player(last_step) - obj.state.y_ball(last_step);
-            final_z_diff = obj.state.z_player(last_step) - obj.state.z_ball(last_step);
-            final_distance = sqrt(final_x_diff^2 + final_y_diff^2 + final_z_diff^2);
-            
-            % Store in results
-            obj.state.final_distance = final_distance;
-            obj.state.mean_distance = mean(obj.state.distance_to_target(1:last_step));
-            
-            obj.logger.log('INFO', sprintf('Simulation complete. Final distance: %.3f', final_distance));
-            
+            % Final results
+            obj.state.final_distance = obj.state.distance_to_target(end);
             results = obj.state.getResults();
         end
         
@@ -228,6 +242,112 @@ classdef Model < handle
             trial_duration_steps = round(obj.config.T_per_trial / obj.config.dt);
             trial_idx = ceil(i / trial_duration_steps);
             trial_idx = max(1, min(obj.config.n_trials, trial_idx));
+        end
+        
+        function [target_x, target_y, target_z] = predictInterceptionPoint(obj, i)
+            % Predict where ball will be based on current trajectory
+            lookahead_time = 1.0;  % Seconds to look ahead
+            
+            target_x = obj.state.x_ball(i) + obj.state.vx_ball(i) * lookahead_time;
+            target_y = obj.state.y_ball(i) + obj.state.vy_ball(i) * lookahead_time;
+            target_z = obj.state.z_ball(i) + obj.state.vz_ball(i) * lookahead_time;
+            
+            % Clamp to workspace
+            bounds = obj.config.workspace_bounds;
+            target_x = max(bounds(1,1), min(bounds(1,2), target_x));
+            target_y = max(bounds(2,1), min(bounds(2,2), target_y));
+            target_z = max(bounds(3,1), min(bounds(3,2), target_z));
+        end
+        
+        function storeObservation(obj, x_ball, y_ball, z_ball, vx_ball, vy_ball, vz_ball, ...
+                                   x_player, y_player, z_player, vx_player, vy_player, vz_player)
+            % Store current observations in circular buffers
+            
+            if ~obj.config.enable_delay
+                return;  % Skip buffering if delay disabled
+            end
+            
+            % Store ball observation
+            obj.ball_observation_buffer(obj.buffer_index, :) = ...
+                [x_ball, y_ball, z_ball, vx_ball, vy_ball, vz_ball];
+            
+            % Store player observation
+            obj.player_observation_buffer(obj.buffer_index, :) = ...
+                [x_player, y_player, z_player, vx_player, vy_player, vz_player];
+            
+            % Move to next buffer position (circular)
+            obj.buffer_index = mod(obj.buffer_index, obj.buffer_size) + 1;
+        end
+        
+        function [x_ball, y_ball, z_ball, vx_ball, vy_ball, vz_ball] = getDelayedBallObservation(obj)
+            % Retrieve ball observation from delay_steps ago
+            
+            % If delay not enabled OR buffer not initialized, return current state
+            if ~obj.config.enable_delay || isempty(obj.ball_observation_buffer)
+                % No delay - return current state from state arrays
+                % This is called during loop, so use the most recent stored values
+                x_ball = obj.state.x_ball(1);
+                y_ball = obj.state.y_ball(1);
+                z_ball = obj.state.z_ball(1);
+                vx_ball = obj.state.vx_ball(1);
+                vy_ball = obj.state.vy_ball(1);
+                vz_ball = obj.state.vz_ball(1);
+                return;
+            end
+            
+            % Apply delay: look back in circular buffer
+            delay_steps = ceil(obj.config.visual_latency_ms / (obj.config.dt * 1000));
+            
+            % Clamp delay to buffer size
+            delay_steps = min(delay_steps, obj.buffer_size - 1);
+            
+            % Calculate delayed index
+            delayed_idx = obj.buffer_index - delay_steps - 1;
+            if delayed_idx < 1
+                delayed_idx = delayed_idx + obj.buffer_size;
+            end
+            
+            obs = obj.ball_observation_buffer(delayed_idx, :);
+            
+            x_ball = obs(1);
+            y_ball = obs(2);
+            z_ball = obs(3);
+            vx_ball = obs(4);
+            vy_ball = obs(5);
+            vz_ball = obs(6);
+        end
+        
+        function [x_player, y_player, z_player, vx_player, vy_player, vz_player] = getDelayedPlayerObservation(obj)
+            % Retrieve player observation from delay_steps ago
+            
+            % If delay not enabled OR buffer not initialized, return current state
+            if ~obj.config.enable_delay || isempty(obj.player_observation_buffer)
+                % No delay - return current state
+                x_player = obj.state.x_player(1);
+                y_player = obj.state.y_player(1);
+                z_player = obj.state.z_player(1);
+                vx_player = obj.state.vx_player(1);
+                vy_player = obj.state.vy_player(1);
+                vz_player = obj.state.vz_player(1);
+                return;
+            end
+            
+            delay_steps = ceil(obj.config.visual_latency_ms / (obj.config.dt * 1000));
+            delay_steps = min(delay_steps, obj.buffer_size - 1);
+            
+            delayed_idx = obj.buffer_index - delay_steps - 1;
+            if delayed_idx < 1
+                delayed_idx = delayed_idx + obj.buffer_size;
+            end
+            
+            obs = obj.player_observation_buffer(delayed_idx, :);
+            
+            x_player = obs(1);
+            y_player = obs(2);
+            z_player = obs(3);
+            vx_player = obs(4);
+            vy_player = obs(5);
+            vz_player = obs(6);
         end
     end
 end

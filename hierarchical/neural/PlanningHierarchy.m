@@ -115,10 +115,58 @@ classdef PlanningHierarchy < NeuralHierarchy
         
         function [x_pred, y_pred, z_pred] = predictTargetPosition(obj)
             % Get planning hierarchy's prediction of target position
+            
+            % BOOTSTRAP: If predictions are near zero (untrained), use observation
+            % This provides a reasonable starting point for learning
             pos_pred = obj.pred_L1(obj.idx_pos);
+            
+            % If predictions are very small (untrained weights), use observations
+            pred_magnitude = sqrt(pos_pred(1)^2 + pos_pred(2)^2 + pos_pred(3)^2);
+            
+            if pred_magnitude < 0.1
+                % Weights haven't learned yet - use observation as prediction
+                pos_pred = obj.R_L1(obj.idx_pos);
+            end
+            
             x_pred = pos_pred(1);
             y_pred = pos_pred(2);
             z_pred = pos_pred(3);
+        end
+        
+        function predict(obj)
+            % Override parent: use task-specific weights for predictions
+            
+            % Load current task weights into parent properties
+            obj.setTask(obj.current_task_idx);
+            
+            % Call parent's predict (now uses task-specific weights)
+            predict@NeuralHierarchy(obj);
+            
+            % Bootstrap predictions if they're zero (untrained)
+            pred_magnitude = sqrt(obj.pred_L1(1)^2 + obj.pred_L1(2)^2 + obj.pred_L1(3)^2);
+            if pred_magnitude < 0.01
+                % Initialize predictions from observations for learning to bootstrap
+                obj.pred_L1(obj.idx_pos) = obj.R_L1(obj.idx_pos);
+            end
+        end
+        
+        function step(obj, sensory_input)
+            % Single inference step with task-specific learning
+            
+            obj.predict();  % Generate predictions using task weights
+            obj.computeErrors(sensory_input);  % Compute prediction errors
+            obj.updateRepresentations();  % Update layer states
+            obj.updateWeights();  % Learn in task-specific weights
+        end
+        
+        function updateRepresentations(obj)
+            % Override parent: ensure predictions are computed first
+            
+            % CRITICAL: Must predict before updating representations
+            obj.predict();
+            
+            % Now call parent's update
+            updateRepresentations@NeuralHierarchy(obj);
         end
     end
 end
