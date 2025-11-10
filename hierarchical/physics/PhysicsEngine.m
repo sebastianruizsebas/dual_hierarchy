@@ -24,42 +24,35 @@ classdef PhysicsEngine < handle
                 obj, x, y, z, vx, vy, vz, dt)
             % Integrate ball motion (no motor commands, pure physics)
             
-            % FIRST: Update position with CURRENT velocity
-            x_new = x + vx * dt;
-            y_new = y + vy * dt;
-            z_new = z + vz * dt;
+            % Apply gravity and drag FIRST (before position update)
+            vz_new = vz - obj.gravity * dt;
             
-            % Store velocity for collision check
-            vx_new = vx;
-            vy_new = vy;
-            vz_new = vz;
+            drag = 1 - obj.air_drag * dt;
+            vx_new = vx * drag;
+            vy_new = vy * drag;
+            vz_new = vz_new * drag;
             
-            % SECOND: Handle collisions (this will reverse velocity if needed)
+            % Update position with NEW velocity
+            x_new = x + vx_new * dt;
+            y_new = y + vy_new * dt;
+            z_new = z + vz_new * dt;
+            
+            % Handle collisions AFTER position update
             [x_new, y_new, z_new, vx_new, vy_new, vz_new] = ...
                 obj.handleBallCollisions(x_new, y_new, z_new, vx_new, vy_new, vz_new);
-            
-            % THIRD: Apply gravity and drag AFTER collision
-            vz_new = vz_new - obj.gravity * dt;
-            
-            % Apply air resistance
-            drag = 1 - obj.air_drag * dt;
-            vx_new = vx_new * drag;
-            vy_new = vy_new * drag;
-            vz_new = vz_new * drag;
         end
         
         function [x_new, y_new, z_new, vx_new, vy_new, vz_new] = integratePlayer(...
                 obj, x, y, z, vx, vy, vz, vx_cmd, vy_cmd, vz_cmd, dt)
             % Integrate player motion with motor commands
             
-            % Apply motor commands with damping
-            damping = 0.85;
-            vx_new = damping * vx + vx_cmd;
-            vy_new = damping * vy + vy_cmd;
-            vz_new = damping * vz + vz_cmd;
+            % Add command damping to blend old velocity with new command
+            damping = 0.3;  % Keep 30% of old velocity
+            vx_new = damping * vx + (1 - damping) * vx_cmd;
+            vy_new = damping * vy + (1 - damping) * vy_cmd;
             
-            % Apply gravity (only to z)
-            vz_new = vz_new - obj.gravity * dt;
+            % Apply gravity only to vz
+            vz_new = vz + vz_cmd - obj.gravity * dt;
             
             % Apply air resistance
             drag = 1 - obj.air_drag * dt;

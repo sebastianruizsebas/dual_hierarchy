@@ -50,51 +50,47 @@ classdef MotorHierarchy < NeuralHierarchy
         function [vx, vy, vz] = extractMotorCommand(obj)
             % Extract velocity commands from representation
             
-            % Get predicted velocity
-            vel_pred = obj.pred_L1(obj.idx_vel);
+            % Get goal direction
+            goal_direction = obj.R_L1(obj.idx_vel);
+            distance_to_goal = norm(goal_direction);
             
-            fprintf('DEBUG extractMotorCommand:\n');
-            fprintf('  vel_pred: (%.2f, %.2f, %.2f)\n', vel_pred(1), vel_pred(2), vel_pred(3));
-            fprintf('  motor_gain: %.4f\n', obj.motor_gain);
-            fprintf('  idx_vel: [%d, %d, %d]\n', obj.idx_vel(1), obj.idx_vel(2), obj.idx_vel(3));
-            
-            % If prediction is zero, fall back to current velocity
-            if norm(vel_pred) < 0.01
-                fprintf('  -> vel_pred near zero, using R_L1\n');
-                vel_pred = obj.R_L1(obj.idx_vel);
+            % Adaptive gain: increase gain when close to target
+            if distance_to_goal < 1.0
+                k_p = 5.0;  % Higher gain when close
+            else
+                k_p = 2.0;  % Normal gain when far
             end
+            
+            % Generate velocities proportional to distance
+            vx = k_p * goal_direction(1);
+            vy = k_p * goal_direction(2);
+            vz = k_p * goal_direction(3);
             
             % Apply motor gain
-            scaling = 0.8;
-            vx = vel_pred(1) * obj.motor_gain * scaling;
-            vy = vel_pred(2) * obj.motor_gain * scaling;
-            vz = 0;
-            if numel(vel_pred) >= 3
-                vz = vel_pred(3) * obj.motor_gain * scaling * 0.5;
-            end
+            vx = obj.motor_gain * vx;
+            vy = obj.motor_gain * vy;
+            vz = obj.motor_gain * vz;
             
-            fprintf('  final commands: vx=%.2f, vy=%.2f, vz=%.2f\n', vx, vy, vz);
-            
-            % Clamp to reasonable velocity limits
-            max_velocity = 2.0;
+            % Safety limits
+            max_velocity = 5.0;
             vx = max(-max_velocity, min(max_velocity, vx));
             vy = max(-max_velocity, min(max_velocity, vy));
             vz = max(-max_velocity, min(max_velocity, vz));
         end
         
-        function setPositionObservation(obj, x, y, z)
-            % Set position observation in L1 (from physics/proprioception)
-            obj.R_L1(obj.idx_pos) = [x, y, z];
+        function setPositionObservation(obj, x_pos, y_pos, z_pos)
+            % Set player position observation at L1
+            obj.R_L1(obj.idx_pos) = [x_pos, y_pos, z_pos];
         end
         
-        function setVelocityObservation(obj, vx, vy, vz)
-            % Set velocity observation in L1
-            obj.R_L1(obj.idx_vel) = [vx, vy, vz];
+        function setVelocityObservation(obj, vx_vel, vy_vel, vz_vel)
+            % Set player velocity observation at L1
+            obj.R_L1(obj.idx_vel) = [vx_vel, vy_vel, vz_vel];
         end
         
-        function setBiasObservation(obj, bias)
-            % Set bias term (constant input)
-            obj.R_L1(obj.idx_bias) = bias;
+        function setBiasObservation(obj, bias_value)
+            % Set bias observation (always 1.0)
+            obj.R_L1(obj.idx_bias) = bias_value;
         end
         
         function [x, y, z] = getPositionPrediction(obj)
@@ -106,43 +102,38 @@ classdef MotorHierarchy < NeuralHierarchy
         end
         
         function setTargetPosition(obj, x_target, y_target, z_target)
-            % Set the target position that motor hierarchy should chase
-            % Create an error signal that drives motor learning and commands
+            % Set target position for motor control
+            % This modifies the representation to drive movement toward the goal
             
-            % Get current position from observation
+            target_pos = [x_target, y_target, z_target];
             current_pos = obj.R_L1(obj.idx_pos);
-            current_x = current_pos(1);
-            current_y = current_pos(2);
-            current_z = current_pos(3);
             
-            % Calculate direction to target
-            dx = x_target - current_x;
-            dy = y_target - current_y;
-            dz = z_target - current_z;
-            distance = sqrt(dx^2 + dy^2 + dz^2);
+            % Compute direction to target
+            direction = target_pos - current_pos;
+            distance = norm(direction);
             
-            % Normalize direction and create velocity target
-            if distance > 0.1
-                % Target velocity points toward goal
-                target_speed = 1.0;  % m/s toward target
-                vx_target = (dx / distance) * target_speed;
-                vy_target = (dy / distance) * target_speed;
-                vz_target = 0;  % No vertical movement
-            else
-                % At target, stop moving
-                vx_target = 0;
-                vy_target = 0;
-                vz_target = 0;
+            if distance > 0.01
+                % Normalize and scale
+                direction = direction / distance;
+                
+                % Add goal-directed bias to L2 representation
+                % This creates a "pull" toward the target
+                goal_signal = direction * min(distance, 1.0);  % Saturate at 1.0
+                
+                % Modulate L2 to encode goal direction
+                obj.R_L2(1:3) = obj.R_L2(1:3) + 0.1 * goal_signal;
             end
+        end
+        
+        function step(obj, sensory_input)
+            % Single step: predict → observe → error → update → learn
+            % Override parent to ensure L1 is set to sensory input (not accumulated)
             
-            % Set target velocity as L1 prediction (what we want to achieve)
-            obj.pred_L1(obj.idx_vel) = [vx_target, vy_target, vz_target];
-            
-            % Also set position prediction to target
-            obj.pred_L1(obj.idx_pos) = [x_target, y_target, z_target];
-            
-            % Store target for reference
-            obj.target_pos_L2 = [x_target, y_target, z_target];
+            obj.predict();  % Generate predictions from L2, L3
+            obj.R_L1 = sensory_input;  % SET (not accumulate) sensory input
+            obj.computeErrors(sensory_input);
+            obj.updateRepresentations();  % Updates L2, L3 only (L1 stays at observation)
+            obj.updateWeights();  % Learn from errors
         end
     end
 end

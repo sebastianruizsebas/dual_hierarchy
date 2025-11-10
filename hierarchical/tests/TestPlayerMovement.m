@@ -17,22 +17,19 @@ config_struct.n_L2_plan = 15;
 config_struct.n_L3_plan = 8;
 config_struct.gravity = 9.81;
 config_struct.air_drag = 0.1;
-config_struct.restitution = 0.85;
+config_struct.restitution = 0.95;
 config_struct.ground_friction = 0.9;
 config_struct.dt = 0.02;
 config_struct.workspace_bounds = [-5, 5; -5, 5; 0, 5];
-config_struct.eta_rep = 0.01;
-config_struct.eta_W = 0.001;
-config_struct.momentum = 0.9;
-config_struct.weight_decay = 0.98;
+config_struct.eta_rep = 0.05;  % Increase representation learning rate
+config_struct.eta_W = 0.001;  % Increase weight learning rate (10x)
+config_struct.momentum = 0.95;  % Higher momentum
+config_struct.weight_decay = 0.9995;  % Much smaller L2 regularization
 config_struct.T_per_trial = 500;  % Single trial with 500 steps
-config_struct.n_trials = 1;
+config_struct.n_trials = 3;
 config_struct.log_level = 'INFO';
-config_struct.motor_gain = 0.3;  % Reduce from default (probably 1.0)
-config_struct.visual_latency_ms = 300;
+config_struct.motor_gain = 1.2;  % Stronger motor commands
 
-config_struct.position_noise_std = 0.80;
-config_struct.velocity_noise_std = 0.80;
 
 config_high_noise = Config(config_struct);
 model_high_noise = Model(config_high_noise);
@@ -48,12 +45,12 @@ model.state.z_player(1) = 0;      % Ground level
 
 model.state.x_ball(1) = 0;        % Ball on right
 model.state.y_ball(1) = 4;
-model.state.z_ball(1) = 0;        % Ground level
+model.state.z_ball(1) = 2;        % Ground level
 
 % Optional: Give ball initial velocity
-model.state.vx_ball(1) = -1.0;    % Moving toward player
-model.state.vy_ball(1) = -3.0;
-model.state.vz_ball(1) = 4.0;
+model.state.vx_ball(1) = 0;    % Moving toward player
+model.state.vy_ball(1) = -2.0;
+model.state.vz_ball(1) = -2.0;
 
 fprintf('Initial player position: (%.2f, %.2f, %.2f)\n', ...
     model.state.x_player(1), model.state.y_player(1), model.state.z_player(1));

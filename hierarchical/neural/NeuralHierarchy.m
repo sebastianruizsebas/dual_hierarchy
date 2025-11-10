@@ -181,44 +181,29 @@ classdef NeuralHierarchy < handle
         end
         
         function updateWeights(obj)
-            % Update synaptic weights via Hebbian learning
-            % dW ∝ (post-error) ⊗ (pre-activity)
-            
             if obj.frozen
-                return;  % No weight updates if frozen
+                return;
             end
             
-            % W_L3_to_L2 update (predicts L2 from L3)
-            % Outer product: error at L2 × activity at L3
-            dW_32 = (obj.pi_L2 .* obj.E_L2)' * obj.R_L3;
+            % Compute gradients
+            dW_L2_to_L1 = obj.eta_W * (obj.E_L1' * obj.R_L2);
+            dW_L3_to_L2 = obj.eta_W * (obj.E_L2' * obj.R_L3);
             
-            % Add momentum and weight decay
-            dW_32 = obj.eta_W * dW_32 + ...
-                   obj.momentum * obj.dW_L3_to_L2_prev - ...
-                   obj.weight_decay * obj.W_L3_to_L2;
+            % Apply momentum
+            dW_L2_to_L1 = obj.momentum * obj.dW_L2_to_L1_prev + (1 - obj.momentum) * dW_L2_to_L1;
+            dW_L3_to_L2 = obj.momentum * obj.dW_L3_to_L2_prev + (1 - obj.momentum) * dW_L3_to_L2;
             
-            obj.W_L3_to_L2 = obj.W_L3_to_L2 + dW_32;
-            obj.dW_L3_to_L2_prev = dW_32;
+            % Update weights with L2 regularization (proper weight decay)
+            obj.W_L2_to_L1 = obj.W_L2_to_L1 + dW_L2_to_L1 - obj.weight_decay * obj.W_L2_to_L1;
+            obj.W_L3_to_L2 = obj.W_L3_to_L2 + dW_L3_to_L2 - obj.weight_decay * obj.W_L3_to_L2;
             
-            % W_L2_to_L1 update (predicts L1 from L2)
-            dW_21 = (obj.pi_L1 .* obj.E_L1)' * obj.R_L2;
+            % Store momentum
+            obj.dW_L2_to_L1_prev = dW_L2_to_L1;
+            obj.dW_L3_to_L2_prev = dW_L3_to_L2;
             
-            dW_21 = obj.eta_W * dW_21 + ...
-                   obj.momentum * obj.dW_L2_to_L1_prev - ...
-                   obj.weight_decay * obj.W_L2_to_L1;
-            
-            obj.W_L2_to_L1 = obj.W_L2_to_L1 + dW_21;
-            obj.dW_L2_to_L1_prev = dW_21;
-            
-            % Update cached transposes (critical for performance)
-            obj.W_L3_to_L2_T = obj.W_L3_to_L2';
+            % Update transposes
             obj.W_L2_to_L1_T = obj.W_L2_to_L1';
-            
-            % Safety: clip weights to prevent overflow
-            obj.W_L3_to_L2 = max(-obj.max_weight_value, ...
-                                min(obj.max_weight_value, obj.W_L3_to_L2));
-            obj.W_L2_to_L1 = max(-obj.max_weight_value, ...
-                                min(obj.max_weight_value, obj.W_L2_to_L1));
+            obj.W_L3_to_L2_T = obj.W_L3_to_L2';
         end
         
         function FE = computeFreeEnergy(obj)

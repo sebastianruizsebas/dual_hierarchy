@@ -43,6 +43,9 @@ classdef SimulationState < handle
         mean_distance
         interception_success  % Boolean: was ball intercepted?
         interception_step     % Step number when interception occurred
+        
+        % Interception tracking
+        interception_threshold  % Distance threshold for successful interception
     end
     
     methods
@@ -78,6 +81,9 @@ classdef SimulationState < handle
             obj.motor_states = cell(obj.N, 1);
             obj.plan_states = cell(obj.N, 1);
             
+            % Initialize interception threshold
+            obj.interception_threshold = 0.5;  % 0.5 meter threshold (tune as needed)
+            
             % Initialize summary metrics
             obj.final_distance = 0;
             obj.mean_distance = 0;
@@ -112,6 +118,12 @@ classdef SimulationState < handle
             dz = obj.z_player(i) - obj.z_ball(i);
             
             obj.distance_to_target(i) = sqrt(dx^2 + dy^2 + dz^2);
+            
+            % Check for interception (only trigger once)
+            if obj.distance_to_target(i) < obj.interception_threshold && ~obj.interception_success
+                obj.interception_success = true;
+                obj.interception_step = i;
+            end
             
             % Cumulative error (integral of distance over time)
             if i > 1

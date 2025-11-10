@@ -113,6 +113,16 @@ classdef PlanningHierarchy < NeuralHierarchy
             obj.R_L1(obj.idx_pos) = [x_target, y_target, z_target];
         end
         
+        function setVelocityObservation(obj, vx_target, vy_target, vz_target)
+            % Observe target velocity (sensory input at L1)
+            obj.R_L1(obj.idx_vel) = [vx_target, vy_target, vz_target];
+        end
+        
+        function setBiasObservation(obj, bias_value)
+            % Set bias observation (always 1.0)
+            obj.R_L1(obj.idx_bias) = bias_value;
+        end
+        
         function [x_pred, y_pred, z_pred] = predictTargetPosition(obj)
             % Get planning hierarchy's prediction of target position
             
@@ -167,6 +177,27 @@ classdef PlanningHierarchy < NeuralHierarchy
             
             % Now call parent's update
             updateRepresentations@NeuralHierarchy(obj);
+        end
+        
+        function setTargetPosition(obj, x_target, y_target, z_target)
+            % Set target position for planning control
+            % For planning hierarchy, this might modulate L2/L3 to plan trajectories
+            
+            % Similar approach as motor: compute direction to target
+            target_pos = [x_target, y_target, z_target];
+            current_pos = obj.R_L1(obj.idx_pos);
+            
+            % Compute direction to target
+            direction = target_pos - current_pos;
+            distance = norm(direction);
+            
+            if distance > 0.01
+                direction = direction / distance;
+                goal_signal = direction * min(distance, 1.0);
+                
+                % Modulate L2 to encode planned trajectory
+                obj.R_L2(1:3) = obj.R_L2(1:3) + 0.05 * goal_signal;  % Smaller modulation than motor
+            end
         end
     end
 end
