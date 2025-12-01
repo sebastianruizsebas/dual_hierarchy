@@ -14,13 +14,29 @@ classdef SimulationState < handle
         vy_player
         vz_player
         
-        % Target/ball state
-        x_ball
+        % Target/ball state (true/observed for noise simulation)
+        x_ball          % True ball position (no noise)
         y_ball
         z_ball
         vx_ball
         vy_ball
         vz_ball
+        
+        % Observed ball state (with noise when enabled)
+        x_ball_obs
+        y_ball_obs
+        z_ball_obs
+        vx_ball_obs
+        vy_ball_obs
+        vz_ball_obs
+        
+        % True ball state (for delay simulation)
+        x_ball_true
+        y_ball_true
+        z_ball_true
+        vx_ball_true
+        vy_ball_true
+        vz_ball_true
         
         % Free energy tracking
         free_energy_motor
@@ -63,12 +79,29 @@ classdef SimulationState < handle
             obj.vy_player = zeros(obj.N, 1, 'single');
             obj.vz_player = zeros(obj.N, 1, 'single');
             
+            % Ball state arrays
             obj.x_ball = zeros(obj.N, 1, 'single');
             obj.y_ball = zeros(obj.N, 1, 'single');
             obj.z_ball = zeros(obj.N, 1, 'single');
             obj.vx_ball = zeros(obj.N, 1, 'single');
             obj.vy_ball = zeros(obj.N, 1, 'single');
             obj.vz_ball = zeros(obj.N, 1, 'single');
+            
+            % Observed ball state (for noise simulation)
+            obj.x_ball_obs = zeros(obj.N, 1, 'single');
+            obj.y_ball_obs = zeros(obj.N, 1, 'single');
+            obj.z_ball_obs = zeros(obj.N, 1, 'single');
+            obj.vx_ball_obs = zeros(obj.N, 1, 'single');
+            obj.vy_ball_obs = zeros(obj.N, 1, 'single');
+            obj.vz_ball_obs = zeros(obj.N, 1, 'single');
+            
+            % True ball state (for delay simulation)
+            obj.x_ball_true = zeros(obj.N, 1, 'single');
+            obj.y_ball_true = zeros(obj.N, 1, 'single');
+            obj.z_ball_true = zeros(obj.N, 1, 'single');
+            obj.vx_ball_true = zeros(obj.N, 1, 'single');
+            obj.vy_ball_true = zeros(obj.N, 1, 'single');
+            obj.vz_ball_true = zeros(obj.N, 1, 'single');
             
             obj.free_energy_motor = zeros(obj.N, 1, 'single');
             obj.free_energy_plan = zeros(obj.N, 1, 'single');
@@ -109,6 +142,21 @@ classdef SimulationState < handle
             obj.vx_ball(1) = vx;
             obj.vy_ball(1) = vy;
             obj.vz_ball(1) = vz;
+            
+            % Initialize observed and true states to match
+            obj.x_ball_obs(1) = x;
+            obj.y_ball_obs(1) = y;
+            obj.z_ball_obs(1) = z;
+            obj.vx_ball_obs(1) = vx;
+            obj.vy_ball_obs(1) = vy;
+            obj.vz_ball_obs(1) = vz;
+            
+            obj.x_ball_true(1) = x;
+            obj.y_ball_true(1) = y;
+            obj.z_ball_true(1) = z;
+            obj.vx_ball_true(1) = vx;
+            obj.vy_ball_true(1) = vy;
+            obj.vz_ball_true(1) = vz;
         end
         
         function updateDistanceMetrics(obj, i)
@@ -153,6 +201,14 @@ classdef SimulationState < handle
             results.vx_ball = obj.vx_ball;
             results.vy_ball = obj.vy_ball;
             results.vz_ball = obj.vz_ball;
+            
+            % Observed/true states (if used)
+            results.x_ball_obs = obj.x_ball_obs;
+            results.y_ball_obs = obj.y_ball_obs;
+            results.z_ball_obs = obj.z_ball_obs;
+            results.x_ball_true = obj.x_ball_true;
+            results.y_ball_true = obj.y_ball_true;
+            results.z_ball_true = obj.z_ball_true;
             
             % Free energy
             results.free_energy_motor = obj.free_energy_motor;
@@ -208,6 +264,21 @@ classdef SimulationState < handle
             obj.vx_ball(1) = ball_vx;
             obj.vy_ball(1) = ball_vy;
             obj.vz_ball(1) = 0;
+            
+            % Initialize observed and true states
+            obj.x_ball_obs(1) = ball_x;
+            obj.y_ball_obs(1) = ball_y;
+            obj.z_ball_obs(1) = 0;
+            obj.vx_ball_obs(1) = ball_vx;
+            obj.vy_ball_obs(1) = ball_vy;
+            obj.vz_ball_obs(1) = 0;
+            
+            obj.x_ball_true(1) = ball_x;
+            obj.y_ball_true(1) = ball_y;
+            obj.z_ball_true(1) = 0;
+            obj.vx_ball_true(1) = ball_vx;
+            obj.vy_ball_true(1) = ball_vy;
+            obj.vz_ball_true(1) = 0;
             
             % Log initial conditions
             fprintf('[Initial Conditions] Player=(%.1f,%.1f,0), Ball=(%.1f,%.1f,0)\n', ...

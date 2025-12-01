@@ -2,7 +2,7 @@ classdef NeuralHierarchy < handle
     % NEURALHIERARCHY Base class for predictive coding hierarchies
     %   Implements core prediction, error computation, and learning
     
-    properties (Access = protected)
+    properties (Access = public)
         % Layer dimensions
         n_L1  % Sensory layer size
         n_L2  % Middle layer size
@@ -207,15 +207,34 @@ classdef NeuralHierarchy < handle
         end
         
         function FE = computeFreeEnergy(obj)
-            % Compute total free energy as sum of squared representation magnitudes
-            % This is a simplified measure until prediction errors are properly computed
+            % Compute total free energy as precision-weighted prediction errors
+            % Free energy = sum of squared precision-weighted errors (predictive coding)
             % Returns: scalar total free energy
             
-            FE_L1 = sum(obj.R_L1(:).^2);
-            FE_L2 = sum(obj.R_L2(:).^2);
-            FE_L3 = sum(obj.R_L3(:).^2);
+            % Ensure arrays are compatible (handle initialization edge case)
+            if isempty(obj.E_L1) || isempty(obj.pi_L1)
+                FE = 0;
+                return;
+            end
             
-            FE = FE_L1 + FE_L2 + FE_L3;
+            % Precision-weighted squared errors at each layer
+            % Flatten to column vectors and compute element-wise
+            pi_L1_vec = obj.pi_L1(:);
+            E_L1_vec = obj.E_L1(:);
+            pi_L2_vec = obj.pi_L2(:);
+            E_L2_vec = obj.E_L2(:);
+            
+            % Verify sizes match
+            if length(pi_L1_vec) ~= length(E_L1_vec)
+                error('NeuralHierarchy:SizeMismatch', ...
+                    'pi_L1 size (%d) does not match E_L1 size (%d)', ...
+                    length(pi_L1_vec), length(E_L1_vec));
+            end
+            
+            FE_L1 = sum((pi_L1_vec .* E_L1_vec).^2);
+            FE_L2 = sum((pi_L2_vec .* E_L2_vec).^2);
+            
+            FE = FE_L1 + FE_L2;
         end
         
         function step(obj, sensory_input)
@@ -288,8 +307,8 @@ classdef NeuralHierarchy < handle
         end
         
         function pred = getPredL3(obj)
-            % Get L3 predictions
-            pred = obj.pred_L3;
+            % Get L3 predictions (L3 doesn't predict anything, return empty)
+            pred = [];
         end
         
         function rep = getRepL1(obj)
@@ -309,17 +328,17 @@ classdef NeuralHierarchy < handle
         
         function err = getErrorL1(obj)
             % Get L1 errors
-            err = obj.err_L1;
+            err = obj.E_L1;
         end
         
         function err = getErrorL2(obj)
             % Get L2 errors
-            err = obj.err_L2;
+            err = obj.E_L2;
         end
         
         function err = getErrorL3(obj)
-            % Get L3 errors
-            err = obj.err_L3;
+            % Get L3 errors (L3 is top layer, has no prediction error from above)
+            err = [];
         end
     end
 end

@@ -1,4 +1,4 @@
-% filepath: c:\Users\srseb\OneDrive\School\FSU\Fall 2025\Symbolic Numeric Computation w Alan Lemmon\New_Project1\dual_hierarchy\hierarchical\tests\TestNeuroscienceHypotheses.m
+5% filepath: c:\Users\srseb\OneDrive\School\FSU\Fall 2025\Symbolic Numeric Computation w Alan Lemmon\New_Project1\dual_hierarchy\hierarchical\tests\TestNeuroscienceHypotheses.m
 
 addpath(genpath('../'));
 
@@ -14,7 +14,7 @@ fprintf('HYPOTHESIS 1: Cerebellar Adaptation to Visuomotor Delay\n');
 fprintf('─────────────────────────────────────────────────────\n');
 fprintf('Prediction: The brain compensates for visual delays through predictive\n');
 fprintf('coding. Performance should degrade gracefully with increasing latency.\n\n');
-
+rng(0);  % fixed seed for reproducible noise and plots
 delays_ms = [0, 50, 100, 200, 400];
 results_by_delay = struct();
 
@@ -29,7 +29,7 @@ base_config.gravity = 9.81;
 base_config.dt = 0.02;
 base_config.workspace_bounds = [-5, 5; -5, 5; 0, 5];
 base_config.T_per_trial = 250;
-base_config.noise_enabled = false;
+base_config.noise_enabled = true;
 base_config.log_level = 'INFO';
 
 for delay_idx = 1:length(delays_ms)
@@ -38,16 +38,34 @@ for delay_idx = 1:length(delays_ms)
     cfg = base_config;
     cfg.enable_delay = (delay_ms > 0);
     cfg.visual_latency_ms = delay_ms;
-    cfg.prediction_horizon_ms = delay_ms;  % Predict ahead by delay
+    cfg.prediction_horizon_ms = delay_ms;
     
     config = Config(cfg);
     model = Model(config);
     model.state.setInitialConditions(0, 0, 3, 3, -1.0, -1.0);
     model.state.vz_ball(1) = 4.0;
+    model.state.vx_ball(1) = -1.0;
+    model.state.vy_ball(1) = -1.0;
+    model.state.x_ball(1) = 0;
+    model.state.y_ball(1) = 4;
+    model.state.z_ball(1) = 2;  
     
     results = model.run();
     
-    % Store full trajectory for 3D plotting
+    % ✨ NEW: Enhanced performance metrics
+    distance_trajectory = results.distance_to_target;
+    dt = base_config.dt;
+    
+    % RMS distance (captures overall tracking quality)
+    results.rms_distance = sqrt(mean(distance_trajectory.^2));
+    
+    % Area under distance curve (integrated error)
+    results.area_under_curve = trapz(distance_trajectory) * dt;
+    
+    % Time in close proximity (<1m)
+    results.time_close = sum(distance_trajectory < 1.0) * dt;
+    
+    % Store trajectories
     results.x_player = model.state.x_player;
     results.y_player = model.state.y_player;
     results.z_player = model.state.z_player;
@@ -58,8 +76,10 @@ for delay_idx = 1:length(delays_ms)
     key = sprintf('delay_%dms', delay_ms);
     results_by_delay.(key) = results;
     
-    fprintf('  Latency: %3dms | Final distance: %.3f m | Success: %s\n', ...
-        delay_ms, results.final_distance, string(results.interception_success));
+    % ✨ UPDATED: Enhanced reporting
+    fprintf('  Latency: %3dms | Final: %.3fm | RMS: %.3fm | AUC: %.2f | Time<1m: %.2fs | Success: %s\n', ...
+        delay_ms, results.final_distance, results.rms_distance, ...
+        results.area_under_curve, results.time_close, string(results.interception_success));
 end
 
 % Analyze delay hypothesis
@@ -100,9 +120,9 @@ fprintf('Performance should degrade gracefully with increasing noise.\n\n');
 
 noise_levels = struct();
 noise_levels.none = struct('pos', 0.0, 'vel', 0.0, 'label', 'None (baseline)');
-noise_levels.low = struct('pos', 0.05, 'vel', 0.02, 'label', 'Low (realistic)');
-noise_levels.medium = struct('pos', 0.15, 'vel', 0.08, 'label', 'Medium (challenging)');
-noise_levels.high = struct('pos', 0.30, 'vel', 0.20, 'label', 'High (degraded)');
+noise_levels.low = struct('pos', 0.05, 'vel', 0.08, 'label', 'Low (realistic)');
+noise_levels.medium = struct('pos', 0.30, 'vel', 0.38, 'label', 'Medium (challenging)');
+noise_levels.high = struct('pos', 0.60, 'vel', 0.68, 'label', 'High (degraded)');
 
 noise_keys = {'none', 'low', 'medium', 'high'};
 results_by_noise = struct();
@@ -122,6 +142,38 @@ for noise_idx = 1:length(noise_keys)
     model.state.setInitialConditions(0, 0, 3, 3, -1.0, -1.0);
     
     results = model.run();
+    
+    % NEW: Compute time-weighted performance metrics
+    dt = base_config.dt;
+    distance_trajectory = results.distance_to_target;
+    
+    % Area under distance curve (lower = better)
+    results.area_under_curve = trapz(distance_trajectory) * dt;
+    
+    % RMS distance (root-mean-square, lower = better)
+    results.rms_distance = sqrt(mean(distance_trajectory.^2));
+    
+    % Time below threshold (higher = better)
+    threshold = 1.0;  % meters
+    results.time_below_threshold = sum(distance_trajectory < threshold) * dt;
+    
+    % Time to first close approach (<1m)
+    close_idx = find(distance_trajectory < 1.0, 1, 'first');
+    if ~isempty(close_idx)
+        results.time_to_approach = close_idx * dt;
+    else
+        results.time_to_approach = inf;
+    end
+    
+    % quick diagnostics
+    fprintf('  Noise=%s | true x_ball range: [%.3f, %.3f] | obs x_ball range: [%.3f, %.3f]\n', ...
+        noise_spec.label, min(results.x_ball), max(results.x_ball), ...
+        min(model.state.x_ball_obs), max(model.state.x_ball_obs));
+    
+    % store trajectories for plotting
+    results.x_ball_obs = model.state.x_ball_obs;
+    results.y_ball_obs = model.state.y_ball_obs;
+    results.z_ball_obs = model.state.z_ball_obs;
     
     % Store full trajectory for 3D plotting
     results.x_player = model.state.x_player;
@@ -154,12 +206,15 @@ fprintf('    • Performance loss with low noise: %.1f%%\n', loss_low);
 fprintf('    • Performance loss with high noise: %.1f%%\n', loss_high);
 
 % Compute noise sensitivity (slope of performance vs noise)
-noise_std_values = [0, 0.05, 0.15, 0.30];
+% After building results_by_noise:
+% Ensure noise_std_values reflect the noise_levels map above
+noise_std_values = [0.0, noise_levels.low.pos, noise_levels.medium.pos, noise_levels.high.pos];
 final_dists = [results_by_noise.none.final_distance, ...
                results_by_noise.low.final_distance, ...
                results_by_noise.medium.final_distance, ...
                results_by_noise.high.final_distance];
 
+% Fit linear sensitivity
 p = polyfit(noise_std_values, final_dists, 1);
 fprintf('    • Noise sensitivity (m/noise_std): %.3f\n\n', p(1));
 
@@ -186,6 +241,28 @@ model = Model(config);
 for trial = 1:n_trials_learning
     model.state.setInitialConditions(0, 0, 3, 3, -1.0, -1.0);
     results = model.run();
+    
+    % NEW: Compute time-weighted performance metrics
+    dt = base_config.dt;
+    distance_trajectory = results.distance_to_target;
+    
+    % Area under distance curve (lower = better)
+    results.area_under_curve = trapz(distance_trajectory) * dt;
+    
+    % RMS distance (root-mean-square, lower = better)
+    results.rms_distance = sqrt(mean(distance_trajectory.^2));
+    
+    % Time below threshold (higher = better)
+    threshold = 1.0;  % meters
+    results.time_below_threshold = sum(distance_trajectory < threshold) * dt;
+    
+    % Time to first close approach (<1m)
+    close_idx = find(distance_trajectory < 1.0, 1, 'first');
+    if ~isempty(close_idx)
+        results.time_to_approach = close_idx * dt;
+    else
+        results.time_to_approach = inf;
+    end
     
     % Store trajectory and metrics
     learning_results(trial).final_distance = results.final_distance;
@@ -341,10 +418,8 @@ fprintf('Results saved to: NeuroscienceHypotheses_Results.mat\n\n');
 % ========================================================================
 % VISUALIZATION
 % ========================================================================
-figure('Position', [100, 100, 2000, 1200], 'Name', 'Neuroscience Hypotheses - Comprehensive');
-
 % Create main figure with 3D trajectories
-fig_main = figure('Position', [100, 100, 1600, 1000], 'Name', 'Neuroscience Hypotheses');
+fig_main = figure('Position', [100, 100, 1400, 800], 'Name', 'Neuroscience Hypotheses');
 
 % Plot 1: Delay effects (quantitative)
 subplot(2, 3, 1);
@@ -464,10 +539,63 @@ for delay_idx = 1:num_delays
         plot3(results.x_ball(end), results.y_ball(end), results.z_ball(end), ...
             's', 'Color', colors_ball(delay_idx, :), 'MarkerSize', 10, 'MarkerFaceColor', 'm', 'DisplayName', 'B End');
         
+        % ✨ NEW: Mark interception point with annotation
+        if results.interception_success && results.interception_step > 0
+            interception_time = results.interception_step * base_config.dt;
+            x_int = results.player_x(results.interception_step);
+            y_int = results.player_y(results.interception_step);
+            z_int = results.player_z(results.interception_step);
+            
+            % Plot interception marker
+            plot3(x_int, y_int, z_int, 'p', ...
+                'MarkerSize', 15, 'MarkerFaceColor', 'y', 'MarkerEdgeColor', 'k', ...
+                'LineWidth', 2, 'DisplayName', 'Interception');
+            
+            % Add text annotation
+            text(x_int, y_int, z_int + 0.5, ...
+                sprintf('t=%.2fs', interception_time), ...
+                'FontSize', 10, 'FontWeight', 'bold', 'Color', 'k', ...
+                'HorizontalAlignment', 'center', 'BackgroundColor', [1 1 0.8 0.7]);
+        end
+        
+        % ✨ NEW: Detect and mark ball bounces
+        z_ball = results.z_ball;
+        vz_ball = diff(z_ball);
+        bounce_indices = find(z_ball(1:end-1) <= 0.05 & vz_ball < 0 & ...
+                              [vz_ball(2:end); 0] > 0);  % Ground contact with velocity reversal
+        
+        if ~isempty(bounce_indices)
+            for b = 1:min(5, length(bounce_indices))  % Show first 5 bounces
+                bounce_idx = bounce_indices(b);
+                bounce_time = bounce_idx * base_config.dt;
+                
+                plot3(results.x_ball(bounce_idx), results.y_ball(bounce_idx), ...
+                      results.z_ball(bounce_idx), 'v', ...
+                      'MarkerSize', 8, 'MarkerFaceColor', 'r', 'MarkerEdgeColor', 'k');
+                
+                % Label first bounce only to avoid clutter
+                if b == 1
+                    text(results.x_ball(bounce_idx), results.y_ball(bounce_idx), ...
+                         results.z_ball(bounce_idx) - 0.3, ...
+                         sprintf('1st bounce\nt=%.2fs', bounce_time), ...
+                         'FontSize', 8, 'Color', 'r', 'HorizontalAlignment', 'center');
+                end
+            end
+        end
+        
         hold off;
         
         xlabel('X (m)'); ylabel('Y (m)'); zlabel('Z (m)');
-        title(sprintf('Delay: %d ms | Final Distance: %.3f m', delay_ms, results.final_distance));
+        
+        % ✨ NEW: Enhanced title with interception info
+        if results.interception_success
+            title_str = sprintf('Delay: %d ms | Intercepted at t=%.2fs\nFinal Distance: %.3f m', ...
+                delay_ms, results.interception_step * base_config.dt, results.final_distance);
+        else
+            title_str = sprintf('Delay: %d ms | No Interception\nFinal Distance: %.3f m', ...
+                delay_ms, results.final_distance);
+        end
+        title(title_str);
         
         % Set equal aspect ratio
         axis equal;
@@ -476,6 +604,11 @@ for delay_idx = 1:num_delays
         
         % Set consistent axis limits
         xlim([-6, 6]); ylim([-6, 6]); zlim([0, 5]);
+        
+        % Add legend (only first subplot to avoid clutter)
+        if delay_idx == 1
+            legend('Location', 'northeast', 'FontSize', 8);
+        end
     end
 end
 
@@ -520,10 +653,49 @@ for noise_idx = 1:length(noise_viz_keys)
         plot3(results.x_ball(end), results.y_ball(end), results.z_ball(end), ...
             'ms', 'MarkerSize', 10, 'MarkerFaceColor', 'm');
         
+        % ✨ NEW: Mark interception
+        if results.interception_success && results.interception_step > 0
+            interception_time = results.interception_step * base_config.dt;
+            x_int = results.x_player(results.interception_step);
+            y_int = results.y_player(results.interception_step);
+            z_int = results.z_player(results.interception_step);
+            
+            plot3(x_int, y_int, z_int, 'p', ...
+                'MarkerSize', 15, 'MarkerFaceColor', 'y', 'MarkerEdgeColor', 'k', 'LineWidth', 2);
+            
+            text(x_int, y_int, z_int + 0.5, ...
+                sprintf('t=%.2fs', interception_time), ...
+                'FontSize', 10, 'FontWeight', 'bold', 'Color', 'k', ...
+                'HorizontalAlignment', 'center', 'BackgroundColor', [1 1 0.8 0.7]);
+        end
+        
+        % ✨ NEW: Mark ball bounces
+        z_ball = results.z_ball;
+        vz_ball = diff(z_ball);
+        bounce_indices = find(z_ball(1:end-1) <= 0.05 & vz_ball < 0 & ...
+                              [vz_ball(2:end); 0] > 0);
+        
+        if ~isempty(bounce_indices)
+            for b = 1:min(3, length(bounce_indices))
+                bounce_idx = bounce_indices(b);
+                plot3(results.x_ball(bounce_idx), results.y_ball(bounce_idx), ...
+                      results.z_ball(bounce_idx), 'v', ...
+                      'MarkerSize', 8, 'MarkerFaceColor', 'r', 'MarkerEdgeColor', 'k');
+            end
+        end
+        
         hold off;
         
         xlabel('X (m)'); ylabel('Y (m)'); zlabel('Z (m)');
-        title(sprintf('%s\nFinal Distance: %.3f m', noise_viz_labels{noise_idx}, results.final_distance));
+        
+        % ✨ NEW: Enhanced title
+        if results.interception_success
+            title(sprintf('%s\nIntercepted at t=%.2fs | Distance: %.3f m', ...
+                noise_viz_labels{noise_idx}, results.interception_step * base_config.dt, results.final_distance));
+        else
+            title(sprintf('%s\nNo Interception | Distance: %.3f m', ...
+                noise_viz_labels{noise_idx}, results.final_distance));
+        end
         
         axis equal;
         grid on;
@@ -543,8 +715,6 @@ fig_learning_traj = figure('Position', [100, 100, 1600, 600], 'Name', '3D Trajec
 
 for trial = 1:min(n_trials_learning, 3)
     if trial <= length(learning_results)
-        % Re-run to get detailed trajectory (or extract from stored results if available)
-        % For now, show conceptual layout
         
         subplot(1, 3, trial);
         
@@ -568,9 +738,62 @@ for trial = 1:min(n_trials_learning, 3)
             plot3(results_trial.x_player(end), results_trial.y_player(end), results_trial.z_player(end), ...
                 'bs', 'MarkerSize', 10, 'MarkerFaceColor', 'b');
             
+            % ✨ NEW: Mark interception
+            if isfield(results_trial, 'interception') && results_trial.interception
+                % Try to get interception step from saved data
+                if isfield(learning_results(trial), 'interception_step')
+                    int_step = learning_results(trial).interception_step;
+                else
+                    % Compute it from distance data if available
+                    if isfield(learning_results(trial), 'distance_to_target')
+                        distances = learning_results(trial).distance_to_target;
+                        int_step = find(distances < 0.5, 1, 'first');
+                    else
+                        int_step = 0;
+                    end
+                end
+                
+                if int_step > 0 && int_step <= length(results_trial.x_player)
+                    interception_time = int_step * base_config.dt;
+                    x_int = results_trial.x_player(int_step);
+                    y_int = results_trial.y_player(int_step);
+                    z_int = results_trial.z_player(int_step);
+                    
+                    plot3(x_int, y_int, z_int, 'p', ...
+                        'MarkerSize', 15, 'MarkerFaceColor', 'y', 'MarkerEdgeColor', 'k', 'LineWidth', 2);
+                    
+                    text(x_int, y_int, z_int + 0.5, ...
+                        sprintf('t=%.2fs', interception_time), ...
+                        'FontSize', 10, 'FontWeight', 'bold', 'Color', 'k', ...
+                        'HorizontalAlignment', 'center', 'BackgroundColor', [1 1 0.8 0.7]);
+                end
+            end
+            
+            % ✨ NEW: Mark ball bounces
+            z_ball = results_trial.z_ball;
+            vz_ball = diff(z_ball);
+            bounce_indices = find(z_ball(1:end-1) <= 0.05 & vz_ball < 0 & ...
+                                  [vz_ball(2:end); 0] > 0);
+            
+            if ~isempty(bounce_indices)
+                for b = 1:min(3, length(bounce_indices))
+                    bounce_idx = bounce_indices(b);
+                    plot3(results_trial.x_ball(bounce_idx), results_trial.y_ball(bounce_idx), ...
+                          results_trial.z_ball(bounce_idx), 'v', ...
+                          'MarkerSize', 8, 'MarkerFaceColor', 'r', 'MarkerEdgeColor', 'k');
+                end
+            end
+            
             hold off;
             
-            title(sprintf('Trial %d | Distance: %.3f m', trial, results_trial.final_distance));
+            % ✨ NEW: Enhanced title
+            if isfield(results_trial, 'interception') && results_trial.interception
+                title(sprintf('Trial %d | Intercepted | Distance: %.3f m', ...
+                    trial, results_trial.final_distance));
+            else
+                title(sprintf('Trial %d | No Interception | Distance: %.3f m', ...
+                    trial, results_trial.final_distance));
+            end
         else
             text(0.5, 0.5, sprintf('Trial %d results\nnot available', trial), ...
                 'HorizontalAlignment', 'center', 'FontSize', 12);
@@ -586,5 +809,41 @@ for trial = 1:min(n_trials_learning, 3)
 end
 
 sgtitle('3D Trajectories: Learning Progression');
+
+% ✨ NEW: Print diagnostic summary
+fprintf('\n════════════════════════════════════════════════════════════════\n');
+fprintf('INTERCEPTION DIAGNOSTICS\n');
+fprintf('════════════════════════════════════════════════════════════════\n\n');
+
+fprintf('Hypothesis 1 (Delay):\n');
+for delay_idx = 1:length(delays_ms)
+    delay_ms = delays_ms(delay_idx);
+    key = sprintf('delay_%dms', delay_ms);
+    if isfield(results_by_delay, key)
+        r = results_by_delay.(key);
+        if r.interception_success
+            fprintf('  %3dms delay: Intercepted at t=%.2fs (step %d)\n', ...
+                delay_ms, r.interception_step * base_config.dt, r.interception_step);
+        else
+            fprintf('  %3dms delay: No interception\n', delay_ms);
+        end
+    end
+end
+
+fprintf('\nHypothesis 2 (Noise):\n');
+for i = 1:length(noise_keys)
+    nk = noise_keys{i};
+    if isfield(results_by_noise, nk)
+        r = results_by_noise.(nk);
+        if r.interception_success
+            fprintf('  %s: Intercepted at t=%.2fs (step %d)\n', ...
+                noise_levels.(nk).label, r.interception_step * base_config.dt, r.interception_step);
+        else
+            fprintf('  %s: No interception\n', noise_levels.(nk).label);
+        end
+    end
+end
+
+fprintf('\n════════════════════════════════════════════════════════════════\n\n');
 
 fprintf('\n✓ All tests complete. Plots displayed and results saved.\n');

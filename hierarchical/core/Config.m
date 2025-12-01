@@ -103,10 +103,11 @@ classdef Config < handle
             obj.eta_rep = obj.getField(cfg, 'eta_rep', 0.01);
             obj.eta_W = obj.getField(cfg, 'eta_W', 0.001);
             obj.momentum = obj.getField(cfg, 'momentum', 0.9);
-            obj.weight_decay = obj.getField(cfg, 'weight_decay', 0.98);
+            obj.weight_decay = obj.getField(cfg, 'weight_decay', 0.0001);  % L2 regularization
             obj.motor_gain = obj.getField(cfg, 'motor_gain', 1.0);
             obj.max_weight_value = obj.getField(cfg, 'max_weight_value', 10.0);
             obj.max_error_value = obj.getField(cfg, 'max_error_value', 10.0);
+            obj.max_precision_value = obj.getField(cfg, 'max_precision_value', 100.0);
             
             % ========== TRIAL PARAMETERS ==========
             obj.T_per_trial = obj.getField(cfg, 'T_per_trial', 250);

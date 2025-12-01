@@ -134,21 +134,41 @@ classdef Model < handle
                 [x_player_obs, y_player_obs, z_player_obs, vx_player_obs, vy_player_obs, vz_player_obs] = ...
                     obj.getDelayedPlayerObservation();
                 
-                % Add noise if enabled
+                % --- record true (for debugging) ---
+                obj.state.x_ball_true(i) = x_ball;    % store true state
+                obj.state.y_ball_true(i) = y_ball;
+                obj.state.z_ball_true(i) = z_ball;
+                
+                % Add sensory noise (use NoiseGenerator.addNoise API)
                 if obj.config.noise_enabled
-                    x_ball_obs = x_ball_obs + obj.noise_generator.generate('position');
-                    y_ball_obs = y_ball_obs + obj.noise_generator.generate('position');
-                    z_ball_obs = z_ball_obs + obj.noise_generator.generate('position');
-                    vx_ball_obs = vx_ball_obs + obj.noise_generator.generate('velocity');
-                    vy_ball_obs = vy_ball_obs + obj.noise_generator.generate('velocity');
-                    vz_ball_obs = vz_ball_obs + obj.noise_generator.generate('velocity');
+                    x_ball_obs  = obj.noise_generator.addNoise(x_ball_obs,  obj.config.position_noise_std);
+                    y_ball_obs  = obj.noise_generator.addNoise(y_ball_obs,  obj.config.position_noise_std);
+                    z_ball_obs  = obj.noise_generator.addNoise(z_ball_obs,  obj.config.position_noise_std);
+                    vx_ball_obs = obj.noise_generator.addNoise(vx_ball_obs, obj.config.velocity_noise_std);
+                    vy_ball_obs = obj.noise_generator.addNoise(vy_ball_obs, obj.config.velocity_noise_std);
+                    vz_ball_obs = obj.noise_generator.addNoise(vz_ball_obs, obj.config.velocity_noise_std);
                     
-                    x_player_obs = x_player_obs + obj.noise_generator.generate('position');
-                    y_player_obs = y_player_obs + obj.noise_generator.generate('position');
-                    z_player_obs = z_player_obs + obj.noise_generator.generate('position');
-                    vx_player_obs = vx_player_obs + obj.noise_generator.generate('velocity');
-                    vy_player_obs = vy_player_obs + obj.noise_generator.generate('velocity');
-                    vz_player_obs = vz_player_obs + obj.noise_generator.generate('velocity');
+                    x_player_obs  = obj.noise_generator.addNoise(x_player_obs,  obj.config.position_noise_std);
+                    y_player_obs  = obj.noise_generator.addNoise(y_player_obs,  obj.config.position_noise_std);
+                    z_player_obs  = obj.noise_generator.addNoise(z_player_obs,  obj.config.position_noise_std);
+                    vx_player_obs = obj.noise_generator.addNoise(vx_player_obs, obj.config.velocity_noise_std);
+                    vy_player_obs = obj.noise_generator.addNoise(vy_player_obs, obj.config.velocity_noise_std);
+                    vz_player_obs = obj.noise_generator.addNoise(vz_player_obs, obj.config.velocity_noise_std);
+                end
+                
+                % --- record sensory observations for later plotting/diagnostics ---
+                obj.state.x_ball_obs(i)  = x_ball_obs;
+                obj.state.y_ball_obs(i)  = y_ball_obs;
+                obj.state.z_ball_obs(i)  = z_ball_obs;
+                obj.state.vx_ball_obs(i) = vx_ball_obs;
+                obj.state.vy_ball_obs(i) = vy_ball_obs;
+                obj.state.vz_ball_obs(i) = vz_ball_obs;
+                
+                % DIAGNOSTIC: print first few steps to confirm noise magnitude/shape
+                if i <= 5
+                    fprintf('[noise debug] step=%d true_x=%.4f obs_x=%.4f dx=%.4e pos_std=%.4f vel_std=%.4f\n', ...
+                        i, x_ball, x_ball_obs, x_ball_obs - x_ball, ...
+                        obj.config.position_noise_std, obj.config.velocity_noise_std);
                 end
                 
                 % Update task context
@@ -158,8 +178,8 @@ classdef Model < handle
                 % ============================================================
                 % PLANNING HIERARCHY - Predicts ball motion
                 % ============================================================
-                plan_sensory = [x_ball_obs; y_ball_obs; z_ball_obs; ...
-                               vx_ball_obs; vy_ball_obs; vz_ball_obs; 1.0];
+                plan_sensory = [x_ball_obs, y_ball_obs, z_ball_obs, ...
+                               vx_ball_obs, vy_ball_obs, vz_ball_obs, 1.0];
                 obj.planningHierarchy.step(plan_sensory);
                 
                 % Get predicted ball position (where ball will be)
@@ -176,8 +196,8 @@ classdef Model < handle
                 dz_to_ball = z_ball_pred - z_player_obs;
                 
                 % Create augmented sensory input with goal information
-                motor_sensory = [x_player_obs; y_player_obs; z_player_obs; ...
-                                dx_to_ball; dy_to_ball; dz_to_ball; 1.0];
+                motor_sensory = [x_player_obs, y_player_obs, z_player_obs, ...
+                                dx_to_ball, dy_to_ball, dz_to_ball, 1.0];
                 
                 obj.motorHierarchy.step(motor_sensory);
                 
